@@ -1,4 +1,4 @@
-# prevuer
+# prevueR
 SparkNotes for film &amp; entertainment! Get previews &amp; summaries of your favorite media.
 
 # prevueR: Chrome extension
