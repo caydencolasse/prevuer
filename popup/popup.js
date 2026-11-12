@@ -14,13 +14,27 @@ const LINKS = {
   supportEmail: 'info@atitaninc.com',
   shortcuts: 'chrome://extensions/shortcuts',
 };
+const KEY_LINKS = {
+  youtube: 'https://console.cloud.google.com/apis/library/youtube.googleapis.com',
+  trakt: 'https://trakt.tv/oauth/applications',
+};
 const HISTORY_PREVIEW_ROWS = 8;
-const VIDEOS_COLLAPSED = 3;
+
+// The Figma frame is 350 x 500. Chrome caps popups at 800 x 600, so the window can grow
+// up to that; the frame zooms to fit the tighter axis and stretches along the other.
+const WIN = { w: 350, h: 500, maxW: 800, maxH: 600 };
+const SIZE_PRESETS = [
+  ['compact', 'Compact', 350, 500],
+  ['large', 'Large', 420, 600],
+  ['wide', 'Wide', 800, 600],
+];
+const SIZE_CACHE = 'prevuer.size'; // localStorage copy so the popup opens at the right size before storage loads
 
 const app = document.getElementById('app');
 const asset = (name) => `../assets/${name}`;
 let settings = null;
 let renderToken = 0; // bumps on every navigation so late async results don't paint stale screens
+let winSize = [WIN.w, WIN.h];
 
 // ---------- tiny DOM helpers ----------
 function esc(s) {
@@ -106,9 +120,84 @@ function applyTheme() {
   document.documentElement.dataset.theme = settings.theme === 'dark' ? 'dark' : 'light';
 }
 
+// ---------- window size ----------
+function clampSize(w, h) {
+  const clamp = (v, min, max, dflt) => Math.round(Math.min(max, Math.max(min, Number(v) || dflt)));
+  return [clamp(w, WIN.w, WIN.maxW, WIN.w), clamp(h, WIN.h, WIN.maxH, WIN.h)];
+}
+
+function applySize(w, h) {
+  winSize = clampSize(w, h);
+  const [cw, ch] = winSize;
+  const scale = Math.min(cw / WIN.w, ch / WIN.h);
+  const root = document.documentElement.style;
+  root.setProperty('--win-w', `${cw}px`);
+  root.setProperty('--win-h', `${ch}px`);
+  root.setProperty('--scale', String(scale));
+  root.setProperty('--frame-w', `${cw / scale}px`);
+  root.setProperty('--frame-h', `${ch / scale}px`);
+  return winSize;
+}
+
+async function saveSize(w, h) {
+  const [cw, ch] = applySize(w, h);
+  try { localStorage.setItem(SIZE_CACHE, JSON.stringify([cw, ch])); } catch { /* storage blocked */ }
+  settings = await saveSettings({ windowW: cw, windowH: ch });
+  syncSizeButtons();
+}
+
+function syncSizeButtons() {
+  $$(document, '[data-size]').forEach((b) => {
+    const [, , w, h] = SIZE_PRESETS.find((p) => p[0] === b.dataset.size);
+    b.setAttribute('aria-pressed', String(w === winSize[0] && h === winSize[1]));
+  });
+}
+
+// Bottom-left corner grip: Chrome anchors the popup's top-right to the toolbar icon,
+// so the window grows left and down.
+function mountResizeGrip() {
+  const grip = el(`<div class="resize-grip" role="separator" tabindex="0" aria-label="Resize window"
+    title="Drag to resize · double-click to reset"></div>`);
+  let start = null;
+  let next = null;
+  let frame = 0;
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    grip.setPointerCapture(e.pointerId);
+    start = { x: e.screenX, y: e.screenY, w: winSize[0], h: winSize[1] };
+    next = [...winSize];
+    document.documentElement.classList.add('is-resizing');
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (!start) return;
+    next = [start.w - (e.screenX - start.x), start.h + (e.screenY - start.y)];
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => applySize(...next));
+  });
+  const end = () => {
+    if (!start) return;
+    start = null;
+    cancelAnimationFrame(frame);
+    document.documentElement.classList.remove('is-resizing');
+    saveSize(...next);
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+  grip.addEventListener('dblclick', () => saveSize(WIN.w, WIN.h));
+  grip.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 50 : 10;
+    const d = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowDown: [0, step], ArrowUp: [0, -step] }[e.key];
+    if (!d) return;
+    e.preventDefault();
+    saveSize(winSize[0] + d[0], winSize[1] + d[1]);
+  });
+  document.body.appendChild(grip);
+}
+
 // ---------- error dialog ----------
 function closeDialog() {
-  document.querySelector('.modal')?.remove();
+  document.querySelectorAll('.modal, .player').forEach((m) => m.remove());
 }
 
 function showError(err) {
@@ -135,11 +224,39 @@ function showError(err) {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.querySelector('.modal')) {
+  if (e.key === 'Escape' && document.querySelector('.modal, .player')) {
     e.preventDefault();
     closeDialog();
   }
 });
+
+// ---------- in-popup YouTube player ----------
+function openPlayer(video) {
+  closeDialog();
+  const id = encodeURIComponent(video.id);
+  const player = el(`
+    <div class="player" role="dialog" aria-modal="true" aria-label="${esc(video.title)}">
+      <div class="player-box">
+        <div class="player-bar">
+          <p class="player-title" title="${esc(video.title)}">${esc(video.title)}</p>
+          <button class="player-close" aria-label="Close video">&times;</button>
+        </div>
+        <iframe class="player-frame" src="https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0&playsinline=1"
+          title="${esc(video.title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+          allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+        <div class="player-foot">
+          <span class="player-channel">${esc(video.channel)}</span>
+          <a class="btn-dark player-open" href="https://www.youtube.com/watch?v=${id}" target="_blank" rel="noopener">Open on YouTube</a>
+        </div>
+      </div>
+    </div>`);
+  player.addEventListener('click', (e) => {
+    if (e.target === player) closeDialog();
+  });
+  $(player, '.player-close').addEventListener('click', closeDialog);
+  app.firstElementChild?.appendChild(player);
+  $(player, '.player-close').focus();
+}
 
 // ---------- search flow ----------
 async function runSearch(media) {
@@ -185,9 +302,8 @@ function fillSummary(screen, summary, failed) {
   text.classList.remove('is-loading-text');
   if (summary) {
     text.textContent = summary;
-    requestAnimationFrame(() => {
-      btn.disabled = text.scrollHeight <= text.clientHeight + 1;
-    });
+    text.dataset.filled = '';
+    requestAnimationFrame(() => syncMoreButtons(screen));
   } else {
     text.textContent = failed ? 'The AI summary could not be generated for this search.' : 'No summary saved for this search.';
     btn.disabled = true;
@@ -200,13 +316,21 @@ function fillVideos(screen, videos, { failed = false, missingKey = false } = {})
   const btn = $(card, '.more-btn');
   if (videos && videos.length) {
     gallery.replaceChildren(
-      ...videos.map((v) =>
-        el(`<a class="vid" href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}" target="_blank" rel="noopener" title="${esc(v.title)}${v.channel ? ` · ${esc(v.channel)}` : ''}">
+      ...videos.map((v, i) =>
+        el(`<a class="vid" data-vid="${i}" href="https://www.youtube.com/watch?v=${encodeURIComponent(v.id)}" target="_blank" rel="noopener" title="${esc(v.title)}${v.channel ? ` · ${esc(v.channel)}` : ''}">
               <img src="${esc(v.thumb)}" alt="${esc(v.title)}" loading="lazy">
             </a>`),
       ),
     );
-    btn.disabled = videos.length <= VIDEOS_COLLAPSED;
+    // Plain click plays inside the popup; Cmd/Ctrl/middle-click still opens a YouTube tab.
+    gallery.onclick = (e) => {
+      const a = e.target.closest('[data-vid]');
+      if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      openPlayer(videos[Number(a.dataset.vid)]);
+    };
+    gallery.dataset.count = String(videos.length);
+    requestAnimationFrame(() => syncMoreButtons(screen));
     return;
   }
   btn.disabled = true;
@@ -214,6 +338,18 @@ function fillVideos(screen, videos, { failed = false, missingKey = false } = {})
   if (missingKey) note = 'Add a YouTube API Key in <button data-go="settingsApi">Settings › API’s</button> to see trailers &amp; clips.';
   else if (failed) note = 'Trailers &amp; clips could not be loaded.';
   gallery.replaceChildren(el(`<p class="card-note">${note}</p>`));
+}
+
+// "Read More" / "View More" only enable when there's something hidden, which depends on window width.
+function syncMoreButtons(screen = app.firstElementChild) {
+  if (!screen) return;
+  const text = $(screen, '.card-summary:not(.is-open) .summary-text[data-filled]');
+  if (text) $(screen, '[data-toggle="summary"]').disabled = text.scrollHeight <= text.clientHeight + 1;
+  const gallery = $(screen, '.card-trailers:not(.is-open) .gallery[data-count]');
+  if (gallery) {
+    const perRow = Math.max(1, Math.floor((gallery.clientWidth + 8) / 96)); // 88px tile + 8px gap
+    $(screen, '[data-toggle="trailers"]').disabled = Number(gallery.dataset.count) <= perRow;
+  }
 }
 
 function resultCards() {
@@ -610,35 +746,40 @@ screens.settings = async () => {
   });
 };
 
-screens.settingsApi = async () => {
-  settings = await getSettings();
+// Shared by Settings › API's and the first-launch Welcome screen. `help` adds "get a key" links.
+function apiFormHtml({ cls = '', title = 'API', submit = 'Save', help = false, skip = false } = {}) {
   const opts = Object.entries(PROVIDERS)
     .map(([k, p]) => `<option value="${k}" ${settings.aiProvider === k ? 'selected' : ''}>${esc(p.label)}</option>`)
     .join('');
-  const node = settingsFrame({
-    tall: true,
-    panel: `
-      <form class="panel settings-panel is-tall" autocomplete="off">
-        <span class="panel-title">API</span>
-        <div class="settings-stack">
-          <label class="pill-label" for="f-provider">AI provider</label>
-          <select class="pill-field" id="f-provider" name="aiProvider">${opts}</select>
-          <label class="pill-label" for="f-aikey">AI key</label>
-          <input class="pill-field" id="f-aikey" name="aiKey" type="password" placeholder="Chatbot/AI API Key" value="${esc(settings.aiKey)}">
-          <label class="pill-label" for="f-base" data-show="base">Server URL</label>
-          <input class="pill-field" id="f-base" name="aiBaseUrl" data-show="base" placeholder="localhost:8080/v1" value="${esc(settings.aiBaseUrl)}">
-          <label class="pill-label" for="f-model">Model</label>
-          <input class="pill-field" id="f-model" name="aiModel" placeholder="Model (auto)" value="${esc(settings.aiModel)}">
-          <label class="pill-label" for="f-yt">YouTube</label>
-          <input class="pill-field" id="f-yt" name="youtubeKey" type="password" placeholder="Youtube API Key" value="${esc(settings.youtubeKey)}">
-          <label class="pill-label" for="f-tid">Trakt</label>
-          <input class="pill-field" id="f-tid" name="traktClientId" type="password" placeholder="Trakt Client ID" value="${esc(settings.traktClientId)}">
-          <input class="pill-field" id="f-tuser" name="traktUsername" placeholder="Trakt Username" aria-label="Trakt username" value="${esc(settings.traktUsername)}">
-          <button type="submit" class="btn-dark">Save</button>
-          <p class="save-status" role="status"></p>
-        </div>
-      </form>`,
-  });
+  const link = (key, label) => (help ? `<button type="button" class="key-link" data-key-link="${key}">${label} ↗</button>` : '');
+  return `
+    <form class="panel settings-panel is-tall ${cls}" autocomplete="off">
+      <span class="panel-title">${title}</span>
+      <div class="settings-stack">
+        <label class="pill-label" for="f-provider">AI provider</label>
+        <select class="pill-field" id="f-provider" name="aiProvider">${opts}</select>
+        <label class="pill-label" for="f-aikey">AI key</label>
+        <input class="pill-field" id="f-aikey" name="aiKey" type="password" placeholder="Chatbot/AI API Key" value="${esc(settings.aiKey)}">
+        ${link('ai', 'Get an AI key')}
+        <label class="pill-label" for="f-base" data-show="base">Server URL</label>
+        <input class="pill-field" id="f-base" name="aiBaseUrl" data-show="base" placeholder="localhost:8080/v1" value="${esc(settings.aiBaseUrl)}">
+        <label class="pill-label" for="f-model">Model</label>
+        <input class="pill-field" id="f-model" name="aiModel" placeholder="Model (auto)" value="${esc(settings.aiModel)}">
+        <label class="pill-label" for="f-yt">YouTube</label>
+        <input class="pill-field" id="f-yt" name="youtubeKey" type="password" placeholder="Youtube API Key" value="${esc(settings.youtubeKey)}">
+        ${link('youtube', 'Get a YouTube key')}
+        <label class="pill-label" for="f-tid">Trakt${help ? ' (optional)' : ''}</label>
+        <input class="pill-field" id="f-tid" name="traktClientId" type="password" placeholder="Trakt Client ID" value="${esc(settings.traktClientId)}">
+        <input class="pill-field" id="f-tuser" name="traktUsername" placeholder="Trakt Username" aria-label="Trakt username" value="${esc(settings.traktUsername)}">
+        ${link('trakt', 'Create a Trakt app')}
+        <button type="submit" class="btn-dark">${submit}</button>
+        ${skip ? '<button type="button" class="skip-btn" data-action="skip">Skip for now</button>' : ''}
+        <p class="save-status" role="status"></p>
+      </div>
+    </form>`;
+}
+
+function wireApiForm(node, onSaved) {
   const form = $(node, 'form');
   const sync = () => {
     const p = PROVIDERS[form.aiProvider.value];
@@ -647,9 +788,18 @@ screens.settingsApi = async () => {
     const showBase = form.aiProvider.value === 'localai' || form.aiProvider.value === 'llama';
     $$(form, '[data-show="base"]').forEach((x) => (x.hidden = !showBase));
     form.aiBaseUrl.placeholder = p.base.replace(/^https?:\/\//, '');
+    const aiLink = $(form, '[data-key-link="ai"]');
+    if (aiLink) aiLink.textContent = p.needsKey ? 'Get an AI key ↗' : 'Set up LocalAI ↗';
   };
   form.aiProvider.addEventListener('change', sync);
   sync();
+
+  $$(form, '[data-key-link]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const k = b.dataset.keyLink;
+      openTab(k === 'ai' ? PROVIDERS[form.aiProvider.value].keyUrl : KEY_LINKS[k]);
+    }),
+  );
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -657,15 +807,18 @@ screens.settingsApi = async () => {
     let base = form.aiBaseUrl.value.trim();
     if (base && !/^https?:\/\//.test(base)) base = `http://${base}`;
     if (base) {
+      // Match patterns can't carry a port, so ask for the host; it covers every port.
+      let pattern;
       try {
-        const origin = new URL(base).origin;
-        const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
-        if (!granted) {
-          status.textContent = 'Permission for that server URL was declined';
-          return;
-        }
+        const u = new URL(base);
+        pattern = `${u.protocol}//${u.hostname}/*`;
       } catch {
         status.textContent = 'That server URL isn’t valid';
+        return;
+      }
+      const granted = await chrome.permissions.request({ origins: [pattern] }).catch(() => false);
+      if (!granted) {
+        status.textContent = 'Permission for that server URL was declined';
         return;
       }
     }
@@ -677,10 +830,42 @@ screens.settingsApi = async () => {
       youtubeKey: form.youtubeKey.value.trim(),
       traktClientId: form.traktClientId.value.trim(),
       traktUsername: form.traktUsername.value.trim(),
+      onboarded: true,
     });
     form.aiBaseUrl.value = base;
     status.textContent = 'Saved';
     setTimeout(() => (status.textContent = ''), 2000);
+    onSaved?.();
+  });
+  return form;
+}
+
+screens.settingsApi = async () => {
+  settings = await getSettings();
+  const node = settingsFrame({ tall: true, panel: apiFormHtml() });
+  wireApiForm(node);
+  return node;
+};
+
+// ---------- Welcome (first launch) ----------
+const hasAnyKey = (s) => !!(s.aiKey || s.youtubeKey || s.traktClientId);
+
+screens.welcome = async () => {
+  settings = await getSettings();
+  const node = el(`
+    <main class="screen">
+      <header class="hdr">${logo('logo-center')}</header>
+      <div class="main scroll welcome-main">
+        <h1 class="welcome-title">Welcome to prevueR</h1>
+        <p class="welcome-text">Add your API keys to get AI summaries and trailers. Keys are stored only on this device, and you can change them any time in Settings › API’s.</p>
+        ${apiFormHtml({ cls: 'welcome-panel', title: 'Set up your API keys', submit: 'Save &amp; Continue', help: true, skip: true })}
+      </div>
+      ${supportFooter()}
+    </main>`);
+  wireApiForm(node, () => go('home'));
+  $(node, '[data-action="skip"]').addEventListener('click', async () => {
+    settings = await saveSettings({ onboarded: true });
+    go('home');
   });
   return node;
 };
@@ -695,8 +880,20 @@ screens.settingsAppearance = async () => {
           <button class="theme-btn" data-theme-set="dark" aria-pressed="${settings.theme === 'dark'}">Dark</button>
           <button class="theme-btn" data-theme-set="light" aria-pressed="${settings.theme !== 'dark'}">Light</button>
         </div>
+        <span class="panel-title panel-subtitle">Window Size</span>
+        <div class="settings-stack appearance-stack size-stack" role="group" aria-label="Window size">
+          ${SIZE_PRESETS.map(([k, label]) => `<button class="theme-btn" data-size="${k}" aria-pressed="false">${label}</button>`).join('')}
+          <p class="shortcut-hint">or drag the bottom-left corner</p>
+        </div>
       </section>`,
   });
+  $$(node, '[data-size]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const [, , w, h] = SIZE_PRESETS.find((p) => p[0] === b.dataset.size);
+      saveSize(w, h);
+    }),
+  );
+  setTimeout(syncSizeButtons, 0);
   $$(node, '[data-theme-set]').forEach((b) =>
     b.addEventListener('click', async () => {
       settings = await saveSettings({ theme: b.dataset.themeSet });
@@ -763,9 +960,19 @@ screens.settingsSupport = async () => {
 };
 
 // ---------- boot ----------
+try {
+  const cached = JSON.parse(localStorage.getItem(SIZE_CACHE) || 'null');
+  if (Array.isArray(cached)) applySize(...cached);
+} catch { /* storage blocked or bad cache */ }
+mountResizeGrip();
+window.addEventListener('resize', () => syncMoreButtons());
+
 (async () => {
   settings = await getSettings();
   applyTheme();
+  applySize(settings.windowW, settings.windowH);
   const start = new URLSearchParams(location.search).get('screen');
-  await go(start && screens[start] ? start : 'home');
+  if (start && screens[start]) await go(start);
+  else if (!settings.onboarded && !hasAnyKey(settings)) await go('welcome');
+  else await go('home');
 })();

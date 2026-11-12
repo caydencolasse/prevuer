@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "prevueR",
   "short_name": "prevueR",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Preview movies, series, TV shows, events and games: an AI summary plus trailers and clips for anything you search.",
   "icons": {
     "16": "icons/icon16.png",
@@ -31,7 +31,7 @@
       "description": "Open prevueR"
     }
   },
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": ["storage", "activeTab", "scripting", "declarativeNetRequest"],
   "host_permissions": [
     "http://localhost/*",
     "http://127.0.0.1/*",
@@ -40,10 +40,12 @@
     "https://generativelanguage.googleapis.com/*",
     "https://api.llama.com/*",
     "https://www.googleapis.com/*",
-    "https://api.trakt.tv/*"
+    "https://api.trakt.tv/*",
+    "https://www.youtube-nocookie.com/*",
+    "https://www.youtube.com/*"
   ],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' https://i.ytimg.com data:"
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' https://i.ytimg.com data:; frame-src https://www.youtube-nocookie.com https://www.youtube.com"
   }
 }
