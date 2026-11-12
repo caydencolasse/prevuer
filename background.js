@@ -1,8 +1,15 @@
-// The popup does the work; the service worker seeds defaults on install and keeps the
-// YouTube embed rule in place. The Shift+Cmd+P / Ctrl+Shift+P shortcut is the built-in
-// _execute_action command (see manifest).
+// prevueR lives in Chrome's side panel (popup/popup.html). The service worker opens the panel
+// from the toolbar icon and the Shift+Cmd+P / Ctrl+Shift+P shortcut, seeds defaults on install
+// and keeps the YouTube embed rule in place.
 
 import { DEFAULT_SETTINGS } from './lib/storage.js';
+
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+
+// sidePanel.open needs the user gesture, so it must run synchronously inside the listener.
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command === 'open-prevuer' && tab?.windowId != null) chrome.sidePanel.open({ windowId: tab.windowId });
+});
 
 // YouTube's embedded player refuses to play (error 153) when the frame request carries no
 // Referer, and extension pages don't send one. This rule gives the popup's player frames one.

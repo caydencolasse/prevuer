@@ -8,7 +8,7 @@ prevueR previews movies, series, TV episodes, events and sports games. Each sear
 ## Install (developer mode)
 1. Go to `chrome://extensions` and turn on **Developer mode**.
 2. Click **Load unpacked** and select this `prevueR` folder.
-3. Open the extension from the toolbar or with **Shift+Cmd+P** (Ctrl+Shift+P on Windows/Linux). You can change the shortcut under Settings › Shortcut.
+3. Click the toolbar icon or press **Shift+Cmd+P** (Ctrl+Shift+P on Windows/Linux). prevueR opens in Chrome's side panel on the right of the window and stays open while you browse. You can change the shortcut under Settings › Shortcut.
 
 ## Set up the APIs (Settings › API's)
 The first time you open prevueR, a **Welcome** screen asks for these keys, with links to where you get each one. You can skip it and add them later.
@@ -27,12 +27,13 @@ Keys are stored only in `chrome.storage.local` on this device and are never sync
 - **History** stores every search with its summary and clips, so **View** reopens a past search without calling the APIs again. **Full History** scrolls through all of them.
 - **Watched** pages through Trakt history as you scroll. **View** runs a fresh prevueR search for that title.
 - **Trailers & Clips play inside prevueR.** Click a thumbnail to play it in the popup. Cmd/Ctrl-click opens it on YouTube instead. YouTube's player won't load without an HTTP Referer, so `background.js` installs a `declarativeNetRequest` rule that adds one to player frames opened by prevueR. Embeds on other sites are not affected.
-- **Resizable window.** Drag the grip in the bottom-left corner (double-click it to reset), or pick Compact / Large / Wide in Settings › Appearance. The design scales up to fit, and Chrome caps popups at 800 × 600.
+- **Side panel.** Drag the panel's left edge to resize it. The 350 × 500 design scales to fit the panel and stretches to fill any extra space.
+- **Autofill on any tab.** The first time you use Auto Search or Autofill, Chrome asks for permission to read pages. Without it, Autofill can only read the tab where you opened prevueR.
 - API failures and missing keys show the centered **ERROR** dialog from the design.
 
 ## Files
 - `manifest.json`: MV3 manifest, shortcut, permissions
-- `popup/`: UI (`popup.html`, `popup.css`, `popup.js`)
+- `popup/`: UI shown in the side panel (`popup.html`, `popup.css`, `popup.js`)
 - `lib/`: `ai.js` (providers), `youtube.js`, `trakt.js`, `autofill.js` (page scraping), `storage.js`, `media.js`
 - `assets/`: icons and logo exported from Figma; `fonts/`: Poppins and Inter (Latin subset, bundled)
 

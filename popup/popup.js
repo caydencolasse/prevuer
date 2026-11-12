@@ -4,7 +4,7 @@ import { getSettings, saveSettings, getHistory, getHistoryEntry, addHistory } fr
 import { PROVIDERS, providerNeedsKey, generateSummary } from '../lib/ai.js';
 import { searchVideos } from '../lib/youtube.js';
 import { getWatchedPage } from '../lib/trakt.js';
-import { detectFromActiveTab } from '../lib/autofill.js';
+import { detectFromActiveTab, requestPageAccess } from '../lib/autofill.js';
 import { parseQuery, episodeCode, describe, formatDate } from '../lib/media.js';
 import { PrevueRError } from '../lib/errors.js';
 
@@ -19,22 +19,16 @@ const KEY_LINKS = {
   trakt: 'https://trakt.tv/oauth/applications',
 };
 const HISTORY_PREVIEW_ROWS = 8;
+const OPEN_COMMAND = 'open-prevuer'; // keyboard shortcut command in manifest.json
 
-// The Figma frame is 350 x 500. Chrome caps popups at 800 x 600, so the window can grow
-// up to that; the frame zooms to fit the tighter axis and stretches along the other.
-const WIN = { w: 350, h: 500, maxW: 800, maxH: 600 };
-const SIZE_PRESETS = [
-  ['compact', 'Compact', 350, 500],
-  ['large', 'Large', 420, 600],
-  ['wide', 'Wide', 800, 600],
-];
-const SIZE_CACHE = 'prevuer.size'; // localStorage copy so the popup opens at the right size before storage loads
+// The Figma frame is 350 x 500. prevueR runs in Chrome's side panel, which the user resizes
+// by dragging its edge; the frame zooms to fit the tighter axis and stretches along the other.
+const FRAME = { w: 350, h: 500, maxScale: 2 };
 
 const app = document.getElementById('app');
 const asset = (name) => `../assets/${name}`;
 let settings = null;
 let renderToken = 0; // bumps on every navigation so late async results don't paint stale screens
-let winSize = [WIN.w, WIN.h];
 
 // ---------- tiny DOM helpers ----------
 function esc(s) {
@@ -120,79 +114,16 @@ function applyTheme() {
   document.documentElement.dataset.theme = settings.theme === 'dark' ? 'dark' : 'light';
 }
 
-// ---------- window size ----------
-function clampSize(w, h) {
-  const clamp = (v, min, max, dflt) => Math.round(Math.min(max, Math.max(min, Number(v) || dflt)));
-  return [clamp(w, WIN.w, WIN.maxW, WIN.w), clamp(h, WIN.h, WIN.maxH, WIN.h)];
-}
-
-function applySize(w, h) {
-  winSize = clampSize(w, h);
-  const [cw, ch] = winSize;
-  const scale = Math.min(cw / WIN.w, ch / WIN.h);
+// ---------- panel size ----------
+function fitToPanel() {
+  const w = window.innerWidth || FRAME.w;
+  const h = window.innerHeight || FRAME.h;
+  const scale = Math.min(w / FRAME.w, h / FRAME.h, FRAME.maxScale);
   const root = document.documentElement.style;
-  root.setProperty('--win-w', `${cw}px`);
-  root.setProperty('--win-h', `${ch}px`);
   root.setProperty('--scale', String(scale));
-  root.setProperty('--frame-w', `${cw / scale}px`);
-  root.setProperty('--frame-h', `${ch / scale}px`);
-  return winSize;
-}
-
-async function saveSize(w, h) {
-  const [cw, ch] = applySize(w, h);
-  try { localStorage.setItem(SIZE_CACHE, JSON.stringify([cw, ch])); } catch { /* storage blocked */ }
-  settings = await saveSettings({ windowW: cw, windowH: ch });
-  syncSizeButtons();
-}
-
-function syncSizeButtons() {
-  $$(document, '[data-size]').forEach((b) => {
-    const [, , w, h] = SIZE_PRESETS.find((p) => p[0] === b.dataset.size);
-    b.setAttribute('aria-pressed', String(w === winSize[0] && h === winSize[1]));
-  });
-}
-
-// Bottom-left corner grip: Chrome anchors the popup's top-right to the toolbar icon,
-// so the window grows left and down.
-function mountResizeGrip() {
-  const grip = el(`<div class="resize-grip" role="separator" tabindex="0" aria-label="Resize window"
-    title="Drag to resize · double-click to reset"></div>`);
-  let start = null;
-  let next = null;
-  let frame = 0;
-  grip.addEventListener('pointerdown', (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    grip.setPointerCapture(e.pointerId);
-    start = { x: e.screenX, y: e.screenY, w: winSize[0], h: winSize[1] };
-    next = [...winSize];
-    document.documentElement.classList.add('is-resizing');
-  });
-  grip.addEventListener('pointermove', (e) => {
-    if (!start) return;
-    next = [start.w - (e.screenX - start.x), start.h + (e.screenY - start.y)];
-    cancelAnimationFrame(frame);
-    frame = requestAnimationFrame(() => applySize(...next));
-  });
-  const end = () => {
-    if (!start) return;
-    start = null;
-    cancelAnimationFrame(frame);
-    document.documentElement.classList.remove('is-resizing');
-    saveSize(...next);
-  };
-  grip.addEventListener('pointerup', end);
-  grip.addEventListener('pointercancel', end);
-  grip.addEventListener('dblclick', () => saveSize(WIN.w, WIN.h));
-  grip.addEventListener('keydown', (e) => {
-    const step = e.shiftKey ? 50 : 10;
-    const d = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowDown: [0, step], ArrowUp: [0, -step] }[e.key];
-    if (!d) return;
-    e.preventDefault();
-    saveSize(winSize[0] + d[0], winSize[1] + d[1]);
-  });
-  document.body.appendChild(grip);
+  root.setProperty('--frame-w', `${w / scale}px`);
+  root.setProperty('--frame-h', `${h / scale}px`);
+  syncMoreButtons();
 }
 
 // ---------- error dialog ----------
@@ -413,7 +344,8 @@ screens.home = async () => {
     const p = parseQuery(q);
     runSearch({ title: p.title || q, season: p.season, episode: p.episode, type: p.type });
   });
-  $(node, '[data-action="auto"]').addEventListener('click', () => go('create', { autofill: true }));
+  // Ask for page access inside the click so Chrome treats it as a user gesture.
+  $(node, '[data-action="auto"]').addEventListener('click', () => go('create', { autofill: requestPageAccess() }));
   return node;
 };
 
@@ -448,9 +380,9 @@ screens.create = async (params) => {
           <div class="field field-type">
             <span class="tag">Type</span><span class="field-req">*required</span>
             <div class="type-options" role="group" aria-label="Media type">
-              <button type="button" class="type-opt type-opt--movie" data-type="movie" aria-pressed="false" aria-label="Movie"><img class="opt-art" src="${asset('option-movie.svg')}" alt=""></button>
-              <button type="button" class="type-opt type-opt--tv" data-type="tv" aria-pressed="false" aria-label="TV show"><img class="opt-art" src="${asset('option-tv.svg')}" alt=""></button>
-              <button type="button" class="type-opt type-opt--sport" data-type="sport" aria-pressed="false" aria-label="Sport or event"><img src="${asset('icon-sport.svg')}" alt=""></button>
+              <button type="button" class="type-opt type-opt--movie" data-type="movie" aria-pressed="false" aria-label="Movie"><img class="opt-art" src="${asset('option-movie.svg')}" alt=""><span class="opt-label">Movie</span></button>
+              <button type="button" class="type-opt type-opt--tv" data-type="tv" aria-pressed="false" aria-label="TV show"><img class="opt-art" src="${asset('option-tv.svg')}" alt=""><span class="opt-label">Show</span></button>
+              <button type="button" class="type-opt type-opt--sport" data-type="sport" aria-pressed="false" aria-label="Sport or event"><img src="${asset('icon-sport.svg')}" alt=""><span class="opt-label">Sport</span></button>
             </div>
           </div>
           <button type="submit" class="btn-dark form-submit">Search prevueR</button>
@@ -482,10 +414,11 @@ screens.create = async (params) => {
   $$(form, '.type-opt').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
   form.addEventListener('input', (e) => e.target.closest('.field')?.classList.remove('is-invalid'));
 
-  const autofill = async () => {
+  const autofill = async (access) => {
     const btn = $(form, '.autofill-btn');
     btn.classList.add('is-busy');
     status.textContent = 'Reading this tab…';
+    await access;
     const media = await detectFromActiveTab();
     btn.classList.remove('is-busy');
     if (!media) {
@@ -498,7 +431,7 @@ screens.create = async (params) => {
     if (media.type) setType(media.type);
     status.textContent = media.source === 'cache' ? 'Filled from your last detected title' : `Filled from ${media.source}`;
   };
-  $(form, '[data-action="autofill"]').addEventListener('click', autofill);
+  $(form, '[data-action="autofill"]').addEventListener('click', () => autofill(requestPageAccess()));
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -519,7 +452,7 @@ screens.create = async (params) => {
     runSearch({ title, season: season.value, episode: episode.value, type: state.type });
   });
 
-  if (params.autofill) setTimeout(autofill, 0);
+  if (params.autofill) setTimeout(() => autofill(params.autofill), 0);
   return node;
 };
 
@@ -880,20 +813,8 @@ screens.settingsAppearance = async () => {
           <button class="theme-btn" data-theme-set="dark" aria-pressed="${settings.theme === 'dark'}">Dark</button>
           <button class="theme-btn" data-theme-set="light" aria-pressed="${settings.theme !== 'dark'}">Light</button>
         </div>
-        <span class="panel-title panel-subtitle">Window Size</span>
-        <div class="settings-stack appearance-stack size-stack" role="group" aria-label="Window size">
-          ${SIZE_PRESETS.map(([k, label]) => `<button class="theme-btn" data-size="${k}" aria-pressed="false">${label}</button>`).join('')}
-          <p class="shortcut-hint">or drag the bottom-left corner</p>
-        </div>
       </section>`,
   });
-  $$(node, '[data-size]').forEach((b) =>
-    b.addEventListener('click', () => {
-      const [, , w, h] = SIZE_PRESETS.find((p) => p[0] === b.dataset.size);
-      saveSize(w, h);
-    }),
-  );
-  setTimeout(syncSizeButtons, 0);
   $$(node, '[data-theme-set]').forEach((b) =>
     b.addEventListener('click', async () => {
       settings = await saveSettings({ theme: b.dataset.themeSet });
@@ -927,7 +848,7 @@ screens.settingsShortcut = async () => {
   let shortcut = '';
   try {
     const cmds = await chrome.commands.getAll();
-    shortcut = cmds.find((c) => c.name === '_execute_action')?.shortcut || '';
+    shortcut = cmds.find((c) => c.name === OPEN_COMMAND)?.shortcut || '';
   } catch { /* commands API unavailable */ }
   const node = settingsFrame({
     panel: `
@@ -960,17 +881,12 @@ screens.settingsSupport = async () => {
 };
 
 // ---------- boot ----------
-try {
-  const cached = JSON.parse(localStorage.getItem(SIZE_CACHE) || 'null');
-  if (Array.isArray(cached)) applySize(...cached);
-} catch { /* storage blocked or bad cache */ }
-mountResizeGrip();
-window.addEventListener('resize', () => syncMoreButtons());
+fitToPanel();
+window.addEventListener('resize', fitToPanel);
 
 (async () => {
   settings = await getSettings();
   applyTheme();
-  applySize(settings.windowW, settings.windowH);
   const start = new URLSearchParams(location.search).get('screen');
   if (start && screens[start]) await go(start);
   else if (!settings.onboarded && !hasAnyKey(settings)) await go('welcome');

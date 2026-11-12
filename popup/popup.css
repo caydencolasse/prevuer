@@ -1,5 +1,5 @@
 /* prevueR popup: 350 x 500 frame, built from the Figma file "prevueR" (light + dark).
-   The window is resizable: popup.js sets --win-* (real px), --scale and --frame-* (frame px). */
+   It runs in Chrome's side panel: fitToPanel() in popup.js sets --scale and --frame-* (frame px). */
 
 @font-face { font-family: 'Poppins'; font-weight: 400; src: url('../fonts/Poppins-Regular.woff') format('woff'); }
 @font-face { font-family: 'Poppins'; font-weight: 600; src: url('../fonts/Poppins-SemiBold.woff') format('woff'); }
@@ -48,8 +48,8 @@
 
 html, body {
   margin: 0;
-  width: var(--win-w, 350px);
-  height: var(--win-h, 500px);
+  width: 100%;
+  height: 100vh;
   overflow: hidden;
   background: var(--bg);
   font-family: 'Inter', system-ui, sans-serif;
@@ -149,6 +149,7 @@ a { color: inherit; text-decoration: none; }
 }
 input[type='search']::-webkit-search-cancel-button, input[type='search']::-webkit-search-decoration { -webkit-appearance: none; display: none; }
 .search-pill input::placeholder { color: var(--c-input-text); opacity: 1; }
+.search-pill input:focus::placeholder { color: transparent; }
 
 .home-btn {
   position: absolute; left: 9px; width: 143px; height: 34px; border-radius: 20px;
@@ -249,6 +250,12 @@ input[type='search']::-webkit-search-cancel-button, input[type='search']::-webki
 .type-opt--sport[aria-pressed='true'] { background: var(--c-black); border-color: var(--c-black); }
 .type-opt--sport[aria-pressed='true'] img { filter: invert(1); }
 .field-type.is-invalid .type-opt { box-shadow: 0 0 0 0.5px #e00000; }
+.type-opt .opt-label {
+  position: absolute; left: 50%; top: 24px; transform: translateX(-50%);
+  font: 400 6px/8px 'Poppins', sans-serif; color: var(--c-input-text); white-space: nowrap;
+}
+.type-opt--sport .opt-label { top: 23px; } /* this pill sits 1px lower */
+.type-opt[aria-pressed='true'] .opt-label { color: var(--c-black); font-weight: 600; }
 
 .form-submit { left: 50px; top: 310px; width: 86px; font-size: 8px !important; line-height: 10px !important; }
 
@@ -403,9 +410,6 @@ select.pill-field { cursor: pointer; }
 .appearance-stack { width: 53px; gap: 10px; margin-top: 10px; padding-bottom: 33px; }
 .theme-btn { width: 53px; height: 21px; border-radius: 10px; filter: var(--shadow-btn); font-size: 7px; line-height: 8px; background: var(--c-white); color: var(--c-grey); }
 .theme-btn[aria-pressed='true'] { background: var(--c-black); color: var(--c-placeholder); }
-.panel-subtitle { padding-top: 0 !important; margin-top: -18px; }
-.size-stack { padding-bottom: 12px; }
-.size-stack .shortcut-hint { margin-top: -4px; white-space: nowrap; }
 
 .privacy-panel { top: 93px; }
 .privacy-panel .panel-title { padding-top: 4px; }
@@ -474,16 +478,5 @@ select.pill-field { cursor: pointer; }
 .player-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .player-channel { min-width: 0; font-size: 8px; line-height: 10px; color: var(--c-silver); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player-open { flex: none; width: 91px; background: var(--c-white) !important; color: var(--c-black); }
-
-/* ---------- Resize grip (outside #app so it doesn't zoom) ---------- */
-.resize-grip {
-  position: fixed; left: 0; bottom: 0; z-index: 50; width: 14px; height: 14px;
-  cursor: nesw-resize; touch-action: none; opacity: 0.7;
-  background: repeating-linear-gradient(45deg, transparent 0 3px, var(--c-silver) 3px 4px);
-  clip-path: polygon(0 0, 0 100%, 100% 100%);
-}
-.resize-grip:hover, .resize-grip:focus-visible, .is-resizing .resize-grip { opacity: 1; }
-.is-resizing, .is-resizing * { cursor: nesw-resize !important; user-select: none; }
-.is-resizing iframe { pointer-events: none; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
