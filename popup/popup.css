@@ -1,4 +1,5 @@
-/* prevueR popup: 350 x 500 frame, built from the Figma file "prevueR" (light + dark). */
+/* prevueR popup: 350 x 500 frame, built from the Figma file "prevueR" (light + dark).
+   It runs in Chrome's side panel: fitToPanel() in popup.js sets --scale and --frame-* (frame px). */
 
 @font-face { font-family: 'Poppins'; font-weight: 400; src: url('../fonts/Poppins-Regular.woff') format('woff'); }
 @font-face { font-family: 'Poppins'; font-weight: 600; src: url('../fonts/Poppins-SemiBold.woff') format('woff'); }
@@ -47,8 +48,8 @@
 
 html, body {
   margin: 0;
-  width: 350px;
-  height: 500px;
+  width: 100%;
+  height: 100vh;
   overflow: hidden;
   background: var(--bg);
   font-family: 'Inter', system-ui, sans-serif;
@@ -65,10 +66,11 @@ img { display: block; }
 a { color: inherit; text-decoration: none; }
 
 /* ---------- Frame ---------- */
+#app { width: var(--frame-w, 350px); height: var(--frame-h, 500px); zoom: var(--scale, 1); }
 .screen {
   position: relative;
-  width: 350px;
-  height: 500px;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -147,6 +149,7 @@ a { color: inherit; text-decoration: none; }
 }
 input[type='search']::-webkit-search-cancel-button, input[type='search']::-webkit-search-decoration { -webkit-appearance: none; display: none; }
 .search-pill input::placeholder { color: var(--c-input-text); opacity: 1; }
+.search-pill input:focus::placeholder { color: transparent; }
 
 .home-btn {
   position: absolute; left: 9px; width: 143px; height: 34px; border-radius: 20px;
@@ -247,6 +250,12 @@ input[type='search']::-webkit-search-cancel-button, input[type='search']::-webki
 .type-opt--sport[aria-pressed='true'] { background: var(--c-black); border-color: var(--c-black); }
 .type-opt--sport[aria-pressed='true'] img { filter: invert(1); }
 .field-type.is-invalid .type-opt { box-shadow: 0 0 0 0.5px #e00000; }
+.type-opt .opt-label {
+  position: absolute; left: 50%; top: 24px; transform: translateX(-50%);
+  font: 400 6px/8px 'Poppins', sans-serif; color: var(--c-input-text); white-space: nowrap;
+}
+.type-opt--sport .opt-label { top: 23px; } /* this pill sits 1px lower */
+.type-opt[aria-pressed='true'] .opt-label { color: var(--c-black); font-weight: 600; }
 
 .form-submit { left: 50px; top: 310px; width: 86px; font-size: 8px !important; line-height: 10px !important; }
 
@@ -254,7 +263,7 @@ input[type='search']::-webkit-search-cancel-button, input[type='search']::-webki
 .hdr-result { height: 100px; }
 .result-home { top: 74px; }
 .result-pill {
-  position: absolute; left: 94px; top: 68px; width: 162px; height: 26px;
+  position: absolute; left: calc(50% - 81px); top: 68px; width: 162px; height: 26px;
   display: flex; align-items: center; gap: 6px; padding: 0 12px 0 8px;
   border-radius: 20px; background: var(--pill); box-shadow: var(--shadow-panel);
 }
@@ -267,22 +276,22 @@ input[type='search']::-webkit-search-cancel-button, input[type='search']::-webki
 .past-nav .nav-back-btn { position: absolute; left: -2px; top: 0; }
 .past-nav .past-ico { position: absolute; left: 15px; top: 0; width: 14px; height: 12px; }
 .past-nav .past-title {
-  position: absolute; left: 152.5px; top: 1px; transform: translateX(-50%); max-width: 200px;
+  position: absolute; left: calc(50% - 0.5px); top: 1px; transform: translateX(-50%); max-width: calc(100% - 106px);
   font: 400 10px/15px 'Poppins', sans-serif; color: var(--c-silver);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 .result-main { padding: 19px 0 20px; }
 .card {
-  position: relative; width: 305px; margin: 0 auto 25px;
+  position: relative; width: calc(100% - 45px); margin: 0 auto 25px;
   border-radius: 20px; background: var(--panel); box-shadow: var(--shadow-panel);
 }
 .card-title { margin: 0; font-size: 12px; line-height: 15px; color: var(--c-ink); font-weight: 400; }
-.card .more-btn { position: absolute; left: 107px; width: 91px; }
+.card .more-btn { position: absolute; left: calc(50% - 45.5px); width: 91px; }
 
 .card-summary { height: 168px; padding: 11px 15px 0 13px; }
 .card-summary .summary-text {
-  margin: 3px 0 0 2px; width: 275px; font-size: 10px; line-height: 12.1px; color: var(--c-grey);
+  margin: 3px 0 0 2px; font-size: 10px; line-height: 12.1px; color: var(--c-grey);
   display: -webkit-box; -webkit-line-clamp: 9; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line;
 }
 .card-summary .more-btn { top: 138px; }
@@ -290,8 +299,8 @@ input[type='search']::-webkit-search-cancel-button, input[type='search']::-webki
 .card-summary.is-open .summary-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
 .card-summary.is-open .more-btn { top: auto; bottom: 9px; }
 
-.card-trailers { height: 168px; padding: 12px 13px 0 13px; }
-.gallery { margin-top: 7px; display: grid; grid-template-columns: repeat(3, 88px); grid-auto-rows: 87px; gap: 8px; height: 87px; overflow: hidden; }
+.card-trailers { height: 168px; padding: 12px 12px 0 13px; }
+.gallery { margin-top: 7px; display: grid; grid-template-columns: repeat(auto-fill, 88px); grid-auto-rows: 87px; gap: 8px; height: 87px; overflow: hidden; }
 .card-trailers .more-btn { top: 135px; }
 .card-trailers.is-open { height: auto; padding-bottom: 47px; }
 .card-trailers.is-open .gallery { height: auto; }
@@ -353,14 +362,14 @@ input[type='search']::-webkit-search-cancel-button, input[type='search']::-webki
 .list-nav { position: absolute; left: 19px; top: 75px; right: 19px; height: 15px; }
 .list-nav .nav-back-btn { position: absolute; left: -2px; top: 0; }
 .list-nav .list-ico-history { position: absolute; left: 15px; top: 2px; width: 14px; height: 12px; }
-.list-nav .list-title { position: absolute; left: 153.5px; top: 0; transform: translateX(-50%); font-size: 12px; line-height: 15px; color: var(--nav-text); white-space: nowrap; }
+.list-nav .list-title { position: absolute; left: calc(50% - 2.5px); top: 0; transform: translateX(-50%); font-size: 12px; line-height: 15px; color: var(--nav-text); white-space: nowrap; }
 .list-nav .eye { position: absolute; right: calc(100% + 7px); top: 4px; width: 10px; height: 7px; }
 .list-nav .eye img { position: absolute; }
 .list-nav .eye .eye-outer { left: 0; top: 0; width: 10px; height: 7px; }
 .list-nav .eye .eye-pupil { left: 3.5px; top: 2px; width: 3px; height: 3px; }
-.hdr-list .colheads { left: 33px; top: 118px; }
+.hdr-list .colheads { left: calc(50% - 142px); top: 118px; }
 .list-main { position: relative; }
-.list-inner { position: relative; min-height: 100%; padding: 7px 0 18px 41px; }
+.list-inner { position: relative; width: 350px; min-height: 100%; margin: 0 auto; padding: 7px 0 18px 41px; }
 .list-inner .surface { position: absolute; left: 34px; top: 0; bottom: 0; width: 223px; }
 .list-inner .rows { position: relative; }
 .list-more { position: relative; width: 209px; padding: 8px 0 0; text-align: center; font-size: 7px; color: var(--c-grey); }
@@ -431,5 +440,43 @@ select.pill-field { cursor: pointer; }
   box-shadow: var(--shadow-panel); font-size: 7px; line-height: 8px; color: var(--c-grey);
 }
 .dialog-btn:hover { background: var(--c-lavender); }
+
+.key-link { margin: -4px 0 0; font-size: 6px; line-height: 8px; color: var(--c-grey); text-decoration: underline; }
+.key-link:hover { color: var(--c-ink); }
+.skip-btn { margin-top: -2px; font-size: 7px; line-height: 9px; color: var(--c-grey); }
+.skip-btn:hover { text-decoration: underline; }
+
+/* ---------- Welcome (first launch) ---------- */
+.welcome-main { padding: 6px 0 20px; }
+.welcome-title { margin: 0; text-align: center; font: 600 18px/27px 'Poppins', sans-serif; color: var(--brand); }
+.welcome-text { margin: 4px auto 14px; width: 250px; text-align: center; font-size: 9px; line-height: 12px; color: var(--c-grey); }
+[data-theme='dark'] .welcome-text { color: var(--c-silver); }
+.welcome-panel { position: relative; left: auto; top: auto; transform: none; margin: 0 auto; width: 230px; }
+.welcome-panel .panel-title { padding-top: 10px; font-size: 11px; line-height: 13px; }
+.welcome-panel .settings-stack { width: 176px; gap: 9px; margin-top: 12px; }
+.welcome-panel .pill-field { width: 100%; height: 25px; font-size: 9px; line-height: 11px; }
+.welcome-panel .pill-label { font-size: 8px; line-height: 10px; margin: 3px 0 -4px; }
+.welcome-panel .key-link { font-size: 8px; line-height: 10px; }
+.welcome-panel .btn-dark { height: 25px; font-size: 10px; line-height: 12px; }
+.welcome-panel .skip-btn { font-size: 9px; line-height: 11px; }
+.welcome-panel .save-status { font-size: 8px; line-height: 10px; }
+
+/* ---------- In-popup YouTube player ---------- */
+.player {
+  position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.85);
+}
+.player-box { width: min(calc(100% - 20px), calc((var(--frame-h, 500px) - 110px) * 16 / 9)); }
+.player-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.player-title {
+  flex: 1; min-width: 0; margin: 0; font: 400 10px/15px 'Poppins', sans-serif; color: var(--c-white);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.player-close { flex: none; width: 22px; height: 22px; border-radius: 50%; font-size: 18px; line-height: 20px; color: var(--c-white); }
+.player-close:hover { background: rgba(255, 255, 255, 0.15); }
+.player-frame { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 10px; background: var(--c-black); }
+.player-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.player-channel { min-width: 0; font-size: 8px; line-height: 10px; color: var(--c-silver); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.player-open { flex: none; width: 91px; background: var(--c-white) !important; color: var(--c-black); }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
