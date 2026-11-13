@@ -11,6 +11,45 @@ chrome.commands.onCommand.addListener((command, tab) => {
   if (command === 'open-prevuer' && tab?.windowId != null) chrome.sidePanel.open({ windowId: tab.windowId });
 });
 
+// ---------- prevueParty invites (see content/party.js) ----------
+// invites: { [tabId]: partyId } for tabs opened from a party link.
+// pendingJoin: { partyId, tabId } for the side panel to pick up and join.
+const getInvites = async () => (await chrome.storage.session.get('invites')).invites || {};
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  const tab = sender.tab;
+  if (!tab?.id) return false;
+
+  if (msg?.type === 'party:invite') {
+    getInvites().then((invites) => chrome.storage.session.set({ invites: { ...invites, [tab.id]: msg.partyId } }));
+    return false;
+  }
+  if (msg?.type === 'party:invite?') {
+    getInvites().then((invites) => sendResponse({ partyId: invites[tab.id] || null }));
+    return true;
+  }
+  if (msg?.type === 'party:join') {
+    // Open first, while Chrome still counts the click on "Join party" as a user gesture.
+    const opening = chrome.sidePanel.open({ windowId: tab.windowId }).then(() => true, () => false);
+    (async () => {
+      const invites = await getInvites();
+      delete invites[tab.id];
+      await chrome.storage.session.set({ invites, pendingJoin: { partyId: msg.partyId, tabId: tab.id, at: Date.now() } });
+      sendResponse({ opened: await opening });
+    })();
+    return true;
+  }
+  return false;
+});
+
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const invites = await getInvites();
+  if (invites[tabId]) {
+    delete invites[tabId];
+    chrome.storage.session.set({ invites });
+  }
+});
+
 // YouTube's embedded player refuses to play (error 153) when the frame request carries no
 // Referer, and extension pages don't send one. This rule gives the popup's player frames one.
 // It only matches sub-frames the extension itself opens, so other sites' embeds are untouched.
