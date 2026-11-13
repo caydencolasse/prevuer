@@ -135,14 +135,18 @@ a { color: inherit; text-decoration: none; }
 }
 .home-settings { position: absolute; right: 15px; top: 42px; width: 14px; height: 14px; }
 .home-settings img { width: 14px; height: 14px; }
-.home-actions { position: absolute; left: calc(50% - 5px); top: 15px; width: 162px; height: 186px; transform: translateX(-50%); }
-
-.search-pill {
-  display: flex; align-items: center; gap: 3px;
-  width: 162px; height: 34px; padding: 0 13px 0 14px;
-  border-radius: 20px; background: var(--pill); box-shadow: var(--shadow-panel);
+.home-actions {
+  position: absolute; left: 50%; top: 15px; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 16px; width: 162px;
 }
-.search-pill img { width: 9px; height: 9px; flex: none; }
+
+/* Every home button shares one size: 162 x 34, icon at the left, label centered */
+.search-pill, .pill-btn, .home-btn { position: relative; flex: none; width: 162px; height: 34px; border-radius: 20px; }
+.search-pill {
+  display: flex; align-items: center; gap: 3px; padding: 0 6px 0 16px;
+  background: var(--pill); box-shadow: var(--shadow-panel);
+}
+.search-pill img { width: 10px; height: 10px; flex: none; object-fit: contain; }
 .search-pill input {
   flex: 1; min-width: 0; height: 15px; border: 0; outline: 0; background: transparent; padding: 0;
   font: 400 10px/15px 'Poppins', sans-serif; color: var(--c-input-text); text-align: center;
@@ -150,21 +154,33 @@ a { color: inherit; text-decoration: none; }
 input[type='search']::-webkit-search-cancel-button, input[type='search']::-webkit-search-decoration { -webkit-appearance: none; display: none; }
 .search-pill input::placeholder { color: var(--c-input-text); opacity: 1; }
 .search-pill input:focus::placeholder { color: transparent; }
+.search-pill.is-invalid { box-shadow: var(--shadow-panel), 0 0 0 0.5px #e00000; }
 
-.home-btn {
-  position: absolute; left: 9px; width: 143px; height: 34px; border-radius: 20px;
-  background: var(--home-btn); filter: var(--shadow-btn); color: var(--c-white);
-  font-size: 11px; line-height: 13px;
-}
+.pill-btn, .home-btn { font: 400 11px/13px 'Poppins', sans-serif; }
+.pill-btn { background: var(--pill); box-shadow: var(--shadow-panel); color: var(--c-input-text); }
+.pill-btn:hover { background: var(--c-lavender); }
+.home-btn { background: var(--home-btn); filter: var(--shadow-btn); color: var(--c-white); }
 .home-btn:hover { filter: var(--shadow-btn) brightness(1.25); }
-.home-btn .lbl { position: absolute; left: 78px; top: 50%; transform: translate(-50%, -50%); white-space: nowrap; }
-.home-btn img { position: absolute; }
-.home-btn--auto { top: 52px; }
-.home-btn--auto img { left: 24px; top: 12px; width: 9px; height: 9px; }
-.home-btn--history { top: 102px; }
-.home-btn--history img { left: 27px; top: 13px; width: 9px; height: 8px; }
-.home-btn--watched { top: 152px; }
-.home-btn--watched img { left: 26.5px; top: 13.5px; width: 10px; height: 7px; }
+.pill-btn .lbl, .home-btn .lbl { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); white-space: nowrap; }
+.pill-btn img, .home-btn img { position: absolute; left: 16px; top: 50%; transform: translateY(-50%); width: 10px; height: 10px; object-fit: contain; }
+.home-btn.is-search img { filter: brightness(0) invert(1); } /* grey search icon, white on the dark button */
+.home-btn:disabled { opacity: 0.6; cursor: default; }
+
+/* Share screen: read-only link field */
+.link-pill { cursor: text; }
+.link-pill input { font-size: 8px; text-align: left; text-overflow: ellipsis; }
+.link-pill img { width: 9px; height: 7px; }
+
+/* Hub screens (Home, prevueParty): logo, tagline and buttons as one centered group */
+.hub-main {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding-bottom: 74px; /* keeps the group where the Figma frame puts it: slightly above center */
+}
+.logo-hub { width: 49px; height: 49px; }
+.hub-tagline { margin: 14px 0 17px; font-size: 14px; line-height: 17px; color: var(--tagline); white-space: nowrap; }
+.hub-main .home-actions { position: static; transform: none; gap: 20px; }
+.hub-status { min-height: 10px; margin: -8px 0 0; width: 200px; font-size: 8px; line-height: 10px; text-align: center; color: var(--c-grey); }
+.hub-back { position: absolute; left: 18px; top: 41.5px; } /* centered on the gear */
 
 /* ---------- Shared panel / pill controls ---------- */
 .panel { position: absolute; left: 50%; transform: translateX(-50%); border-radius: 20px; background: var(--panel); box-shadow: var(--shadow-panel); }
@@ -298,6 +314,23 @@ input[type='search']::-webkit-search-cancel-button, input[type='search']::-webki
 .card-summary.is-open { height: auto; padding-bottom: 39px; }
 .card-summary.is-open .summary-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
 .card-summary.is-open .more-btn { top: auto; bottom: 9px; }
+
+/* Rotten Tomatoes: score badge top-right of the Summary card, quotes in the expanded card */
+.rt-badge {
+  position: absolute; right: 13px; top: 9px; display: flex; gap: 4px; height: 18px; padding: 0 7px;
+  align-items: center; border-radius: 9px; background: var(--c-white); filter: var(--shadow-btn);
+  font-size: 8px; line-height: 10px; color: var(--c-ink); white-space: nowrap;
+}
+.rt-badge[hidden] { display: none; }
+.rt-badge:hover:not(:disabled) { background: var(--c-lavender); }
+.rt-badge:disabled { cursor: default; }
+.rt-score.is-na { color: var(--c-grey); }
+.rt-reviews { display: none; }
+.card-summary.is-open .rt-reviews:not(:empty) { display: block; margin: 10px 0 0 2px; padding-top: 8px; border-top: 0.5px solid var(--c-silver); }
+.rt-heading { margin: 0 0 4px; font-size: 9px; line-height: 11px; font-weight: 700; color: var(--c-ink); }
+.rt-consensus { margin: 0 0 6px; font-size: 9px; line-height: 11.5px; color: var(--c-grey); font-style: italic; }
+.rt-quote { margin: 0 0 6px; font-size: 9px; line-height: 11.5px; color: var(--c-grey); }
+.rt-quote cite { display: block; margin-top: 1px; font-style: normal; font-size: 8px; color: var(--c-ink); }
 
 .card-trailers { height: 168px; padding: 12px 12px 0 13px; }
 .gallery { margin-top: 7px; display: grid; grid-template-columns: repeat(auto-fill, 88px); grid-auto-rows: 87px; gap: 8px; height: 87px; overflow: hidden; }
@@ -478,5 +511,63 @@ select.pill-field { cursor: pointer; }
 .player-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .player-channel { min-width: 0; font-size: 8px; line-height: 10px; color: var(--c-silver); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .player-open { flex: none; width: 91px; background: var(--c-white) !important; color: var(--c-black); }
+
+/* ---------- prevueParty chat ---------- */
+.chat-screen { --chat-ink: var(--c-ink); --chat-muted: var(--c-grey); --bubble: var(--c-lavender); --bubble-mine: var(--c-black); }
+[data-theme='dark'] .chat-screen { --chat-ink: var(--c-placeholder); --chat-muted: var(--c-silver); --bubble: #2c2c2c; --bubble-mine: var(--c-grey); }
+.chat-hdr { flex: none; display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px; border-bottom: 0.5px solid var(--c-silver); }
+.chat-hdr .nav-back-btn { margin: 0; flex: none; }
+.chat-head { flex: 1; min-width: 0; }
+.chat-name { margin: 0; font: 600 13px/17px 'Poppins', sans-serif; color: var(--chat-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-sub { margin: 0; font-size: 8px; line-height: 11px; color: var(--chat-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-icon-btn { flex: none; width: 24px; height: 24px; border-radius: 50%; font-size: 11px; background: var(--pill); box-shadow: var(--shadow-panel); }
+.chat-leave { flex: none; height: 24px; padding: 0 10px; border-radius: 12px; background: var(--c-black); color: var(--c-white); font-size: 9px; filter: var(--shadow-btn); }
+.chat-leave:hover { filter: var(--shadow-btn) brightness(1.6); }
+
+.chat-log { flex: 1 1 auto; min-height: 0; padding: 10px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
+.msg { position: relative; display: flex; flex-direction: column; align-items: flex-start; max-width: 82%; }
+.msg.is-mine { align-self: flex-end; align-items: flex-end; }
+.msg-meta { margin: 0 4px 2px; font-size: 7px; line-height: 9px; color: var(--chat-muted); }
+.msg-bubble {
+  padding: 6px 10px; border-radius: 12px 12px 12px 4px; background: var(--bubble); color: var(--chat-ink);
+  font-size: 10px; line-height: 13px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; outline-offset: 1px;
+}
+.msg.is-mine .msg-bubble { border-radius: 12px 12px 4px 12px; background: var(--bubble-mine); color: var(--c-white); }
+.msg.is-emoji .msg-bubble, .msg.is-mine.is-emoji .msg-bubble { background: none; padding: 0 2px; font-size: 26px; line-height: 30px; }
+.msg-system { align-self: center; max-width: 90%; margin: 0; text-align: center; font-size: 8px; line-height: 10px; color: var(--chat-muted); }
+
+/* Reaction picker: shows on hover, keyboard focus or a tap on the bubble */
+.msg-picker {
+  position: absolute; top: -6px; right: -4px; z-index: 2; display: none; gap: 2px; padding: 3px 5px;
+  border-radius: 14px; background: var(--c-white); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+}
+.msg.is-mine .msg-picker { right: auto; left: -4px; }
+.msg:hover .msg-picker, .msg:focus-within .msg-picker, .msg.is-picking .msg-picker { display: flex; }
+.msg-picker button { font-size: 13px; line-height: 16px; padding: 0 1px; border-radius: 6px; transition: transform 0.1s; }
+.msg-picker button:hover { transform: scale(1.25); }
+.msg-reactions { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+.msg-reactions:empty { display: none; }
+.chip { height: 16px; padding: 0 6px; border-radius: 8px; background: var(--pill); border: 0.5px solid var(--c-silver); font-size: 8px; line-height: 14px; color: var(--chat-ink); }
+.chip.is-mine { border-color: var(--c-black); background: var(--c-white); color: var(--c-black); font-weight: 700; }
+
+.chat-compose { flex: none; padding: 6px 14px 14px; border-top: 0.5px solid var(--c-silver); }
+.chat-quick { display: flex; justify-content: space-between; padding: 0 18px 6px; }
+.chat-emoji { font-size: 17px; line-height: 22px; padding: 0 3px; border-radius: 8px; transition: transform 0.1s; }
+.chat-emoji:hover { transform: scale(1.2); }
+.chat-form { display: flex; gap: 6px; }
+.chat-form input {
+  flex: 1; min-width: 0; height: 30px; padding: 0 12px; border: 0; outline: 0; border-radius: 15px;
+  background: var(--pill); box-shadow: var(--shadow-panel); font: 400 10px/14px 'Poppins', sans-serif; color: var(--c-ink);
+}
+.chat-form input::placeholder { color: var(--c-input-text); }
+.chat-form input:focus::placeholder { color: transparent; }
+.chat-send { flex: none; height: 30px; padding: 0 14px; border-radius: 15px; background: var(--c-black); color: var(--c-white); font: 400 10px/14px 'Poppins', sans-serif; filter: var(--shadow-btn); }
+
+.chat-name-gate { position: absolute; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, 0.18); }
+.chat-name-gate[hidden] { display: none; }
+.chat-name-card { width: 220px; padding: 18px 16px 16px; border-radius: 20px; background: var(--c-white); filter: var(--shadow-btn); display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.chat-name-title { margin: 0; font: 600 11px/14px 'Poppins', sans-serif; color: var(--c-ink); }
+.chat-name-card input { width: 100%; height: 28px; border-radius: 14px; border: 0.5px solid var(--c-silver); padding: 0 12px; text-align: center; font-size: 10px; outline: 0; color: var(--c-ink); background: var(--c-white); }
+.chat-name-card .btn-dark { width: 110px; height: 24px; font-size: 9px; }
 
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

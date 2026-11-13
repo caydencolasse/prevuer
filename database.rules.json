@@ -1,0 +1,47 @@
+{
+  "rules": {
+    "parties": {
+      ".read": false,
+      ".write": false,
+      "$partyId": {
+        ".read": "auth != null",
+        "meta": {
+          ".write": "auth != null && !data.exists()",
+          ".validate": "newData.hasChildren(['name', 'url', 'hostUid', 'createdAt']) && newData.child('hostUid').val() === auth.uid && newData.child('name').isString() && newData.child('name').val().length <= 60 && newData.child('url').isString() && newData.child('url').val().length <= 2000"
+        },
+        "members": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && root.child('parties/' + $partyId + '/meta').exists()",
+            "name": { ".validate": "newData.isString() && newData.val().length <= 24" },
+            "joinedAt": { ".validate": "newData.isNumber()" },
+            "lastSeen": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "messages": {
+          "$msgId": {
+            ".write": "auth != null && !data.exists() && root.child('parties/' + $partyId + '/meta').exists()",
+            ".validate": "newData.hasChildren(['uid', 'name', 'kind', 'text', 'ts']) && newData.child('uid').val() === auth.uid && newData.child('ts').val() === now",
+            "kind": { ".validate": "newData.val() === 'text' || newData.val() === 'emoji' || newData.val() === 'system'" },
+            "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 500" },
+            "name": { ".validate": "newData.isString() && newData.val().length <= 24" }
+          }
+        },
+        "reactions": {
+          "$msgId": {
+            "$key": {
+              "$uid": {
+                ".write": "auth != null && auth.uid === $uid && root.child('parties/' + $partyId + '/messages/' + $msgId).exists()",
+                ".validate": "newData.val() === true && ($key === 'like' || $key === 'love' || $key === 'laugh' || $key === 'wow' || $key === 'sad')"
+              }
+            }
+          }
+        },
+        "playback": {
+          ".write": "auth != null && root.child('parties/' + $partyId + '/members/' + auth.uid).exists()",
+          ".validate": "newData.hasChildren(['state', 'time', 'at', 'by']) && newData.child('by').val() === auth.uid && (newData.child('state').val() === 'playing' || newData.child('state').val() === 'paused') && newData.child('time').isNumber() && newData.child('at').val() === now"
+        }
+      }
+    }
+  }
+}

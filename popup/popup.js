@@ -4,14 +4,20 @@ import { getSettings, saveSettings, getHistory, getHistoryEntry, addHistory } fr
 import { PROVIDERS, providerNeedsKey, generateSummary } from '../lib/ai.js';
 import { searchVideos } from '../lib/youtube.js';
 import { getWatchedPage } from '../lib/trakt.js';
-import { detectFromActiveTab, requestPageAccess } from '../lib/autofill.js';
+import { detectFromActiveTab } from '../lib/autofill.js';
+import { getReviews } from '../lib/reviews.js';
 import { parseQuery, episodeCode, describe, formatDate } from '../lib/media.js';
 import { PrevueRError } from '../lib/errors.js';
+import { firebaseConfigured } from '../lib/firebase.js';
+import {
+  REACTIONS, MAX_MESSAGE, createParty, connectParty, partyLink, partyMeta,
+  getActiveParty, setActiveParty, clearActiveParty,
+} from '../lib/party.js';
 
 const LINKS = {
   privacy: 'https://atitaninc.com/prevuer/privacypolicy',
   faq: 'https://atitaninc.com/prevuer/faq',
-  supportEmail: 'info@atitaninc.com',
+  supportEmail: 'info@atitan.tech',
   shortcuts: 'chrome://extensions/shortcuts',
 };
 const KEY_LINKS = {
@@ -61,7 +67,7 @@ const supportFooter = () => `
   </footer>`;
 
 const homeButton = (cls) =>
-  `<button class="nav-home ${cls}" data-go="home" aria-label="Home"><img class="ico" src="${asset('icon-home.svg')}" alt=""></button>`;
+  `<button class="nav-home ${cls}" data-go="search" aria-label="Back to prevueSearch"><img class="ico" src="${asset('icon-home.svg')}" alt=""></button>`;
 
 const typeIcon = (type) => {
   if (type === 'tv') return `<img class="t-tv" src="${asset('icon-tv.svg')}" alt="TV">`;
@@ -200,17 +206,21 @@ async function runSearch(media) {
   await go('result', { media, loading: true });
   const token = renderToken;
 
-  const [sum, vids] = await Promise.allSettled([
+  const [sum, vids, revs] = await Promise.allSettled([
     generateSummary(media, settings),
     settings.youtubeKey ? searchVideos(media, settings) : Promise.resolve(null),
+    getReviews(media, settings),
   ]);
   if (token !== renderToken) return; // user navigated away
 
   const summary = sum.status === 'fulfilled' ? sum.value : null;
   const videos = vids.status === 'fulfilled' ? vids.value : null;
+  const reviews = revs.status === 'fulfilled' ? revs.value : null;
   const screen = app.firstElementChild;
   fillSummary(screen, summary, sum.status === 'rejected');
   fillVideos(screen, videos, { failed: vids.status === 'rejected', missingKey: !settings.youtubeKey });
+  // Scores are a bonus: a failure (e.g. the shared RapidAPI quota running out) only shows on the badge.
+  fillReviews(screen, reviews, revs.status === 'rejected' ? revs.reason : null);
 
   if (summary || (videos && videos.length)) {
     await addHistory({
@@ -220,6 +230,7 @@ async function runSearch(media) {
       type: media.type || 'movie',
       summary: summary || '',
       videos: videos || [],
+      reviews: reviews || null,
     });
   }
   const failure = [sum, vids].find((r) => r.status === 'rejected');
@@ -271,11 +282,49 @@ function fillVideos(screen, videos, { failed = false, missingKey = false } = {})
   gallery.replaceChildren(el(`<p class="card-note">${note}</p>`));
 }
 
+// Rotten Tomatoes badge in the Summary card's top-right; clicking it opens the critics' quotes.
+function fillReviews(screen, reviews, error = null) {
+  const card = $(screen, '.card-summary');
+  const badge = $(card, '.rt-badge');
+  const panel = $(card, '.rt-reviews');
+  if (!reviews) {
+    badge.hidden = !error;
+    if (error) {
+      badge.innerHTML = '<span class="rt-score is-na">🍅 –</span>';
+      badge.title = `Rotten Tomatoes scores unavailable: ${error.message || 'request failed'}`;
+      badge.disabled = true;
+    }
+    return;
+  }
+  const pct = (v) => (v == null ? '–' : `${v}%`);
+  badge.hidden = false;
+  badge.disabled = false;
+  badge.title = `Rotten Tomatoes${reviews.label ? ` (${reviews.label})` : ''}: Tomatometer ${pct(reviews.tomatometer)}, Audience ${pct(reviews.audience)}. Click for reviews.`;
+  badge.innerHTML = `
+    <span class="rt-score" aria-label="Tomatometer">🍅 ${pct(reviews.tomatometer)}</span>
+    <span class="rt-score" aria-label="Audience score">🍿 ${pct(reviews.audience)}</span>`;
+  const quotes = reviews.quotes.map((q) => `<blockquote class="rt-quote">“${esc(q.text)}”${q.critic ? `<cite>${esc(q.critic)}</cite>` : ''}</blockquote>`).join('');
+  panel.innerHTML = `
+    <h3 class="rt-heading">Rotten Tomatoes${reviews.label ? ` · ${esc(reviews.label)}` : ''}</h3>
+    ${reviews.consensus ? `<p class="rt-consensus">${esc(reviews.consensus)}</p>` : ''}
+    ${quotes || '<p class="rt-consensus">No critic quotes available.</p>'}`;
+  badge.onclick = () => {
+    if (!card.classList.contains('is-open')) $(card, '[data-toggle="summary"]').click();
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+  // The quotes live in the expanded card, so there's always something to "Read More".
+  $(card, '[data-toggle="summary"]').dataset.hasReviews = '';
+  requestAnimationFrame(() => syncMoreButtons(screen));
+}
+
 // "Read More" / "View More" only enable when there's something hidden, which depends on window width.
 function syncMoreButtons(screen = app.firstElementChild) {
   if (!screen) return;
   const text = $(screen, '.card-summary:not(.is-open) .summary-text[data-filled]');
-  if (text) $(screen, '[data-toggle="summary"]').disabled = text.scrollHeight <= text.clientHeight + 1;
+  if (text) {
+    const btn = $(screen, '[data-toggle="summary"]');
+    btn.disabled = text.scrollHeight <= text.clientHeight + 1 && !('hasReviews' in btn.dataset);
+  }
   const gallery = $(screen, '.card-trailers:not(.is-open) .gallery[data-count]');
   if (gallery) {
     const perRow = Math.max(1, Math.floor((gallery.clientWidth + 8) / 96)); // 88px tile + 8px gap
@@ -287,7 +336,9 @@ function resultCards() {
   return `
     <section class="card card-summary">
       <h2 class="card-title">Summary</h2>
+      <button class="rt-badge" hidden></button>
       <p class="summary-text is-loading-text">Generating your prevueR summary…</p>
+      <div class="rt-reviews"></div>
       <button class="btn-dark more-btn" data-toggle="summary" aria-expanded="false">Read More</button>
     </section>
     <section class="card card-trailers">
@@ -314,25 +365,404 @@ function wireResultToggles(node) {
   });
 }
 
-// ---------- Home ----------
-screens.home = async () => {
+// ---------- Home (hub) ----------
+const settingsButton = () =>
+  `<button class="home-settings" data-go="settings" aria-label="Settings"><img src="${asset('icon-settings.svg')}" alt=""></button>`;
+const backButton = (to) =>
+  `<button class="nav-back-btn hub-back" data-go="${to}" aria-label="Back"><img class="ico" src="${asset('icon-back-small.svg')}" alt=""></button>`;
+
+screens.home = async () =>
+  el(`
+    <main class="screen">
+      <header class="hdr">${settingsButton()}</header>
+      <div class="main hub-main">
+        ${logo('logo-hub')}
+        <p class="hub-tagline">Recap &amp; watch with friends</p>
+        <div class="home-actions">
+          <button class="pill-btn" data-go="search"><img src="${asset('icon-search.svg')}" alt=""><span class="lbl">prevueSearch</span></button>
+          <button class="home-btn" data-go="party"><img src="${asset('icon-auto-search.svg')}" alt=""><span class="lbl">prevueParty</span></button>
+        </div>
+      </div>
+      ${supportFooter()}
+    </main>`);
+
+// ---------- prevueParty ----------
+// One party at a time per side panel. The session (Firebase stream + heartbeat) lives here at
+// module level so it survives moving between screens; only Leave ends it.
+const party = { session: null, view: null, tabId: null, link: '', name: '', onView: null, lastApplied: null };
+
+async function activeTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab || null;
+}
+
+screens.party = async () => {
+  const active = await getActiveParty();
+  if (active) return screens.partyChat({ ...active, resume: true });
+  const node = el(`
+    <main class="screen">
+      <header class="hdr">${backButton('home')}${settingsButton()}</header>
+      <div class="main hub-main">
+        ${logo('logo-hub')}
+        <p class="hub-tagline">Watch party with friends</p>
+        <div class="home-actions">
+          <form class="search-pill" novalidate>
+            <img src="${asset('icon-search.svg')}" alt="">
+            <input type="text" name="party" placeholder="Enter party name" aria-label="Party name" autocomplete="off" maxlength="60">
+          </form>
+          <button class="home-btn" data-action="next"><span class="lbl">Next</span></button>
+          <p class="hub-status" role="status"></p>
+        </div>
+      </div>
+      ${supportFooter()}
+    </main>`);
+  const form = $(node, 'form');
+  const status = $(node, '.hub-status');
+  const btn = $(node, '[data-action="next"]');
+  const next = async (e) => {
+    e.preventDefault();
+    const name = form.party.value.trim();
+    form.classList.toggle('is-invalid', !name);
+    if (!name) {
+      status.textContent = 'Give your party a name first';
+      form.party.focus();
+      return;
+    }
+    const tab = await activeTab();
+    if (!tab || !/^https?:/.test(tab.url || '')) {
+      status.textContent = 'Open the movie or show you want to watch in this tab, then press Next.';
+      return;
+    }
+    if (!firebaseConfigured()) {
+      showError(new PrevueRError('prevueParty isn’t set up yet: add your Firebase config in lib/config.js (see README)', { service: 'prevueParty' }));
+      return;
+    }
+    btn.disabled = true;
+    status.textContent = 'Creating your party…';
+    try {
+      const id = await createParty({ name, url: tab.url });
+      const active = { id, name, link: partyLink(tab.url, id), tabId: tab.id };
+      await setActiveParty(active);
+      go('partyShare', active);
+    } catch (err) {
+      btn.disabled = false;
+      status.textContent = '';
+      showError(err);
+    }
+  };
+  form.addEventListener('submit', next);
+  form.addEventListener('input', () => form.classList.remove('is-invalid'));
+  btn.addEventListener('click', next);
+  return node;
+};
+
+async function copyText(text, input) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    input?.select();
+    return document.execCommand('copy');
+  }
+}
+
+screens.partyShare = async ({ id, name, link, tabId }) => {
+  const node = el(`
+    <main class="screen">
+      <header class="hdr">${backButton('home')}${settingsButton()}</header>
+      <div class="main hub-main">
+        ${logo('logo-hub')}
+        <p class="hub-tagline" title="${esc(name)}">Share “${esc(name)}” with friends</p>
+        <div class="home-actions">
+          <label class="search-pill link-pill">
+            <img src="${asset('icon-email.svg')}" alt="">
+            <input type="text" name="link" value="${esc(link)}" readonly aria-label="Party link">
+          </label>
+          <button class="pill-btn" data-action="copy"><span class="lbl">Copy URL</span></button>
+          <button class="home-btn" data-action="start"><img src="${asset('icon-auto-search.svg')}" alt=""><span class="lbl">Start Party Chat</span></button>
+          <p class="hub-status" role="status">Friends need prevueR installed. The link opens this page and invites them in.</p>
+        </div>
+      </div>
+      ${supportFooter()}
+    </main>`);
+  const input = $(node, '[name="link"]');
+  input.addEventListener('focus', () => input.select());
+  $(node, '[data-action="copy"]').addEventListener('click', async (e) => {
+    const ok = await copyText(link, input);
+    const lbl = $(e.currentTarget, '.lbl');
+    lbl.textContent = ok ? 'Copied!' : 'Press ⌘C to copy';
+    setTimeout(() => (lbl.textContent = 'Copy URL'), 1800);
+  });
+  $(node, '[data-action="start"]').addEventListener('click', () => go('partyChat', { id, name, link, tabId }));
+  return node;
+};
+
+// Content-script helpers: the party is bound to one tab, whose <video> we keep in sync.
+const tabMessage = (msg) => chrome.tabs.sendMessage(party.tabId, msg).catch(() => null);
+
+async function applyRemotePlayback(pb) {
+  if (!party.session || !pb || pb.by === party.session.uid) return;
+  const key = `${pb.state}@${pb.time}@${pb.at}`;
+  if (party.lastApplied === key) return;
+  party.lastApplied = key;
+  const time = party.session.expectedTime(pb);
+  // Netflix's player crashes if <video>.currentTime is set directly; seek through its own API.
+  let seek = true;
+  try {
+    const tab = await chrome.tabs.get(party.tabId);
+    if (/(^|\.)netflix\.com$/.test(new URL(tab.url).hostname)) {
+      seek = false;
+      await chrome.scripting.executeScript({
+        target: { tabId: party.tabId },
+        world: 'MAIN',
+        args: [Math.round(time * 1000)],
+        func: (ms) => {
+          const vp = window.netflix?.appContext?.state?.playerApp?.getAPI?.().videoPlayer;
+          const p = vp?.getVideoPlayerBySessionId?.(vp.getAllPlayerSessionIds()[0]);
+          if (p && Math.abs(p.getCurrentTime() - ms) > 1500) p.seek(ms);
+        },
+      });
+    }
+  } catch { /* tab closed or not scriptable */ }
+  await tabMessage({ type: 'party:apply', state: pb.state, time, seek });
+}
+
+async function attachTab() {
+  const res = await tabMessage({ type: 'party:attach' });
+  party.onSync?.(!!res?.hasVideo);
+  // Late joiners jump straight to where the party is.
+  if (res?.hasVideo && party.view?.playback) {
+    party.lastApplied = null;
+    applyRemotePlayback(party.view.playback);
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== 'party:local' || !party.session || sender.tab?.id !== party.tabId) return;
+  party.session.setPlayback(msg).catch(() => {});
+});
+
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (party.session && tabId === party.tabId && info.status === 'complete') attachTab();
+});
+
+async function startParty({ id, name, link, tabId }) {
+  if (party.session?.id === id) {
+    await attachTab(); // back on the chat screen: refresh the sync status
+    return;
+  }
+  party.session?.close();
+  Object.assign(party, { session: null, view: null, tabId, link, name, lastApplied: null });
+  const session = await connectParty(id, {
+    nickname: settings.partyName,
+    onUpdate: (view) => {
+      party.view = view;
+      party.onView?.(view);
+      applyRemotePlayback(view.playback);
+    },
+    onError: (err) => showError(err),
+  });
+  party.session = session;
+  await attachTab();
+}
+
+async function leaveParty() {
+  await tabMessage({ type: 'party:detach' });
+  await party.session?.leave();
+  Object.assign(party, { session: null, view: null, tabId: null, onView: null, onSync: null });
+  await clearActiveParty();
+}
+
+screens.partyChat = async ({ id, name, link, tabId }) => {
+  settings = await getSettings();
+  const node = el(`
+    <main class="screen chat-screen">
+      <header class="chat-hdr">
+        <button class="nav-back-btn" data-go="home" aria-label="Back to Home (stay in the party)"><img class="ico" src="${asset('icon-back-small.svg')}" alt=""></button>
+        <div class="chat-head">
+          <p class="chat-name" title="${esc(name)}">${esc(name)}</p>
+          <p class="chat-sub"><span class="chat-members">Connecting…</span> · <span class="chat-sync">Looking for the video…</span></p>
+        </div>
+        <button class="chat-icon-btn" data-action="copy" title="Copy invite link" aria-label="Copy invite link">🔗</button>
+        <button class="chat-leave" data-action="leave">Leave</button>
+      </header>
+      <div class="chat-log scroll" role="log" aria-live="polite" aria-label="Party chat"></div>
+      <footer class="chat-compose">
+        <div class="chat-quick" role="group" aria-label="Send a reaction">
+          ${REACTIONS.map(([key, emoji]) => `<button class="chat-emoji" data-send="${key}" aria-label="Send ${emoji}">${emoji}</button>`).join('')}
+        </div>
+        <form class="chat-form">
+          <input name="text" maxlength="${MAX_MESSAGE}" placeholder="Message the party…" aria-label="Message" autocomplete="off">
+          <button class="chat-send" aria-label="Send">Send</button>
+        </form>
+      </footer>
+      <div class="chat-name-gate" hidden>
+        <form class="chat-name-card">
+          <p class="chat-name-title">What should friends call you?</p>
+          <input name="nick" maxlength="24" placeholder="Your name" aria-label="Your name" autocomplete="off" required>
+          <button class="btn-dark">Join the chat</button>
+        </form>
+      </div>
+    </main>`);
+
+  const log = $(node, '.chat-log');
+  const form = $(node, '.chat-form');
+  const items = new Map(); // message id -> element
+
+  const renderMsg = (m) => {
+    if (m.kind === 'system') {
+      return el(`<p class="msg msg-system" data-id="${esc(m.id)}">${esc(m.text)}</p>`);
+    }
+    return el(`
+      <div class="msg ${m.mine ? 'is-mine' : ''} ${m.kind === 'emoji' ? 'is-emoji' : ''}" data-id="${esc(m.id)}">
+        <p class="msg-meta">${esc(m.mine ? 'You' : m.name)} · ${esc(new Date(m.ts || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}</p>
+        <div class="msg-bubble" tabindex="0">${esc(m.text)}</div>
+        <div class="msg-picker" role="group" aria-label="React">
+          ${REACTIONS.map(([key, emoji]) => `<button data-react="${key}" aria-label="React ${emoji}">${emoji}</button>`).join('')}
+        </div>
+        <div class="msg-reactions"></div>
+      </div>`);
+  };
+  const reactionsHtml = (m) =>
+    m.reactions.map((r) => `<button class="chip ${r.mine ? 'is-mine' : ''}" data-react="${r.key}" aria-pressed="${r.mine}">${r.emoji} ${r.count}</button>`).join('');
+
+  const render = (view) => {
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    for (const m of view.messages) {
+      let item = items.get(m.id);
+      if (!item) {
+        item = renderMsg(m);
+        items.set(m.id, item);
+        log.appendChild(item);
+      }
+      const chips = $(item, '.msg-reactions');
+      if (chips) {
+        const html = reactionsHtml(m);
+        if (chips.dataset.html !== html) {
+          chips.innerHTML = html;
+          chips.dataset.html = html;
+        }
+      }
+    }
+    const online = view.members.filter((x) => x.online).length;
+    $(node, '.chat-members').textContent = `${online} watching`;
+    $(node, '.chat-members').title = view.members.filter((x) => x.online).map((x) => x.name).join(', ');
+    if (atBottom) log.scrollTop = log.scrollHeight;
+  };
+
+  log.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-react]');
+    if (b) {
+      const msg = b.closest('.msg');
+      party.session?.react(msg.dataset.id, b.dataset.react).catch(showError);
+      if (b.closest('.msg-picker')) {
+        msg.classList.remove('is-picking');
+        b.blur(); // :focus-within would keep the picker open
+      }
+      return;
+    }
+    const bubble = e.target.closest('.msg-bubble');
+    if (bubble) bubble.closest('.msg').classList.toggle('is-picking'); // tap-to-react for touch/keyboard
+  });
+  $$(node, '[data-send]').forEach((b) => b.addEventListener('click', () => party.session?.sendEmoji(b.dataset.send).catch(showError)));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = form.text.value;
+    if (!text.trim() || !party.session) return;
+    form.text.value = '';
+    await party.session.send(text).catch(showError);
+  });
+  $(node, '[data-action="copy"]').addEventListener('click', async (e) => {
+    const ok = await copyText(link);
+    e.currentTarget.textContent = ok ? '✓' : '🔗';
+    setTimeout(() => (e.currentTarget.textContent = '🔗'), 1500);
+  });
+  $(node, '[data-action="leave"]').addEventListener('click', async () => {
+    await leaveParty();
+    go('party');
+  });
+
+  party.onView = (view) => {
+    if (node.isConnected) render(view);
+  };
+  party.onSync = (found) => {
+    $(node, '.chat-sync').textContent = found ? 'Video synced' : 'No video on the party tab yet';
+  };
+
+  const connect = async () => {
+    try {
+      await startParty({ id, name, link, tabId });
+      if (party.view) render(party.view);
+      form.text.focus();
+    } catch (err) {
+      showError(err);
+    }
+  };
+
+  if (settings.partyName) {
+    setTimeout(connect, 0);
+  } else {
+    // First party: ask for a display name before joining.
+    const gate = $(node, '.chat-name-gate');
+    gate.hidden = false;
+    const nameForm = $(gate, 'form');
+    setTimeout(() => nameForm.nick.focus(), 0);
+    nameForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const nick = nameForm.nick.value.trim().slice(0, 24);
+      if (!nick) return;
+      settings = await saveSettings({ partyName: nick });
+      gate.hidden = true;
+      connect();
+    });
+  }
+  return node;
+};
+
+// A friend clicked "Join party" on an invite link (see background.js / content/party.js).
+async function takePendingJoin() {
+  const { pendingJoin } = await chrome.storage.session.get('pendingJoin');
+  if (!pendingJoin) return false;
+  await chrome.storage.session.remove('pendingJoin');
+  if (party.session) await leaveParty();
+  let link = '';
+  try {
+    link = partyLink((await chrome.tabs.get(pendingJoin.tabId)).url, pendingJoin.partyId);
+  } catch { /* tab gone */ }
+  let name = 'prevueParty';
+  try {
+    name = (await partyMeta(pendingJoin.partyId))?.name || name;
+  } catch { /* shown as an error once we connect */ }
+  const active = { id: pendingJoin.partyId, name, link, tabId: pendingJoin.tabId };
+  await setActiveParty(active);
+  await go('partyChat', active);
+  return true;
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session' && changes.pendingJoin?.newValue) takePendingJoin();
+});
+
+// ---------- prevueSearch ----------
+screens.search = async () => {
   const node = el(`
     <main class="screen">
       <header class="hdr hdr-home">
+        ${backButton('home')}
         ${logo('logo-center')}
         <h1 class="home-title">prevueR</h1>
         <p class="home-tagline">Previewing Your Favorite Movies,<br>Series &amp; TV Shows Made Easy</p>
-        <button class="home-settings" data-go="settings" aria-label="Settings"><img src="${asset('icon-settings.svg')}" alt=""></button>
+        ${settingsButton()}
       </header>
       <div class="main">
         <div class="home-actions">
           <form class="search-pill" role="search">
             <img src="${asset('icon-search.svg')}" alt="">
-            <input type="search" name="q" placeholder="Enter Movie or Show Title" aria-label="Enter movie or show title" autocomplete="off" autofocus>
+            <input type="search" name="q" placeholder="Enter Movie or Show Title" aria-label="Enter movie or show title" autocomplete="off">
           </form>
-          <button class="home-btn home-btn--auto" data-action="auto"><img src="${asset('icon-auto-search.svg')}" alt=""><span class="lbl">Auto Search</span></button>
-          <button class="home-btn home-btn--history" data-go="history"><img src="${asset('icon-history.svg')}" alt=""><span class="lbl">History</span></button>
-          <button class="home-btn home-btn--watched" data-go="watched"><img src="${asset('icon-watched.svg')}" alt=""><span class="lbl">Watched</span></button>
+          <button class="home-btn" data-action="auto"><img src="${asset('icon-auto-search.svg')}" alt=""><span class="lbl">Auto Search</span></button>
+          <button class="home-btn" data-go="history"><img src="${asset('icon-history.svg')}" alt=""><span class="lbl">History</span></button>
+          <button class="home-btn" data-go="watched"><img src="${asset('icon-watched.svg')}" alt=""><span class="lbl">Watched</span></button>
         </div>
       </div>
       ${supportFooter()}
@@ -344,8 +774,19 @@ screens.home = async () => {
     const p = parseQuery(q);
     runSearch({ title: p.title || q, season: p.season, episode: p.episode, type: p.type });
   });
-  // Ask for page access inside the click so Chrome treats it as a user gesture.
-  $(node, '[data-action="auto"]').addEventListener('click', () => go('create', { autofill: requestPageAccess() }));
+  // With text in the field the Auto Search button turns into a plain Search button.
+  const form = $(node, 'form');
+  const auto = $(node, '[data-action="auto"]');
+  form.q.addEventListener('input', () => {
+    const typing = !!form.q.value.trim();
+    auto.classList.toggle('is-search', typing);
+    $(auto, '.lbl').textContent = typing ? 'Search' : 'Auto Search';
+    $(auto, 'img').src = asset(typing ? 'icon-search.svg' : 'icon-auto-search.svg');
+  });
+  auto.addEventListener('click', () => {
+    if (form.q.value.trim()) form.requestSubmit();
+    else go('create', { autofill: true });
+  });
   return node;
 };
 
@@ -414,11 +855,10 @@ screens.create = async (params) => {
   $$(form, '.type-opt').forEach((b) => b.addEventListener('click', () => setType(b.dataset.type)));
   form.addEventListener('input', (e) => e.target.closest('.field')?.classList.remove('is-invalid'));
 
-  const autofill = async (access) => {
+  const autofill = async () => {
     const btn = $(form, '.autofill-btn');
     btn.classList.add('is-busy');
     status.textContent = 'Reading this tab…';
-    await access;
     const media = await detectFromActiveTab();
     btn.classList.remove('is-busy');
     if (!media) {
@@ -431,7 +871,7 @@ screens.create = async (params) => {
     if (media.type) setType(media.type);
     status.textContent = media.source === 'cache' ? 'Filled from your last detected title' : `Filled from ${media.source}`;
   };
-  $(form, '[data-action="autofill"]').addEventListener('click', () => autofill(requestPageAccess()));
+  $(form, '[data-action="autofill"]').addEventListener('click', autofill);
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -452,7 +892,7 @@ screens.create = async (params) => {
     runSearch({ title, season: season.value, episode: episode.value, type: state.type });
   });
 
-  if (params.autofill) setTimeout(() => autofill(params.autofill), 0);
+  if (params.autofill) setTimeout(autofill, 0);
   return node;
 };
 
@@ -501,6 +941,7 @@ screens.past = async ({ id, from = 'history' }) => {
   wireResultToggles(node);
   fillSummary(node, entry.summary, false);
   fillVideos(node, entry.videos, {});
+  fillReviews(node, entry.reviews || null);
   return node;
 };
 
@@ -567,7 +1008,7 @@ screens.watched = async (_params, token) => {
       <header class="hdr hdr-list">
         ${brandBar()}
         <div class="list-nav">
-          <button class="nav-back-btn" data-go="home" aria-label="Back"><img class="ico" src="${asset('icon-back-small.svg')}" alt=""></button>
+          <button class="nav-back-btn" data-go="search" aria-label="Back"><img class="ico" src="${asset('icon-back-small.svg')}" alt=""></button>
           <span class="list-title">
             <span class="eye"><img class="eye-outer ico" src="${asset('icon-eye-outer.svg')}" alt=""><img class="eye-pupil ico" src="${asset('icon-eye-pupil.svg')}" alt=""></span>
             Watched
@@ -701,6 +1142,8 @@ function apiFormHtml({ cls = '', title = 'API', submit = 'Save', help = false, s
         <label class="pill-label" for="f-yt">YouTube</label>
         <input class="pill-field" id="f-yt" name="youtubeKey" type="password" placeholder="Youtube API Key" value="${esc(settings.youtubeKey)}">
         ${link('youtube', 'Get a YouTube key')}
+        <label class="pill-label" for="f-rt">Rotten Tomatoes</label>
+        <input class="pill-field" id="f-rt" name="rtKey" type="password" placeholder="Built-in (optional)" value="${esc(settings.rtKey)}">
         <label class="pill-label" for="f-tid">Trakt${help ? ' (optional)' : ''}</label>
         <input class="pill-field" id="f-tid" name="traktClientId" type="password" placeholder="Trakt Client ID" value="${esc(settings.traktClientId)}">
         <input class="pill-field" id="f-tuser" name="traktUsername" placeholder="Trakt Username" aria-label="Trakt username" value="${esc(settings.traktUsername)}">
@@ -761,6 +1204,7 @@ function wireApiForm(node, onSaved) {
       aiBaseUrl: base,
       aiModel: form.aiModel.value.trim(),
       youtubeKey: form.youtubeKey.value.trim(),
+      rtKey: form.rtKey.value.trim(),
       traktClientId: form.traktClientId.value.trim(),
       traktUsername: form.traktUsername.value.trim(),
       onboarded: true,
@@ -889,6 +1333,8 @@ window.addEventListener('resize', fitToPanel);
   applyTheme();
   const start = new URLSearchParams(location.search).get('screen');
   if (start && screens[start]) await go(start);
+  else if (await takePendingJoin()) { /* joining a friend's party */ }
+  else if (await getActiveParty()) await go('party'); // reopened mid-party: back to the chat
   else if (!settings.onboarded && !hasAnyKey(settings)) await go('welcome');
   else await go('home');
 })();
